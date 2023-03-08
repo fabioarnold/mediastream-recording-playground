@@ -2,6 +2,7 @@ const canvas = document.getElementById("app");
 const mainCtx = canvas.getContext("2d");
 const slider = document.getElementById("slider");
 const recordButton = document.getElementById("recordButton");
+const encodeButton = document.getElementById("encodeButton");
 
 const originalWidth = canvas.width;
 const originalHeight = canvas.height;
@@ -77,32 +78,78 @@ recordButton.onclick = async () => {
   const options = { mimeType: "video/mp4; codecs=avc1" };
 
   const offscreenCanvas = canvas.cloneNode();
-  const offscreenCtx = offscreenCanvas.getContext("2d");
+  const ctx = offscreenCanvas.getContext("2d");
 
   const recorder = new MediaRecorder(offscreenCanvas.captureStream(), options);
   const chunks = [];
   recorder.ondataavailable = (event) => chunks.push(event.data);
-  recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: "video/mp4" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "video.mp4";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  recorder.onstop = () => download("video.mp4", new Blob(chunks, { type: "video/mp4" }));
   recorder.start();
   recordButton.disabled = true;
-  recordButton.innerText = "Rendering video ...";
+  recordButton.innerText = "Recording video";
 
   const numFrames = duration * fps;
   for (let frame = 0; frame < numFrames; frame++) {
-    draw(offscreenCtx, frame / numFrames);
+    draw(ctx, frame / numFrames);
     await wait(1000 / fps);
     recorder.requestData();
   }
 
   recorder.stop();
   recordButton.disabled = false;
-  recordButton.innerText = "Save video";
+  recordButton.innerText = "Record";
 };
+
+encodeButton.onclick = async () => {
+  encodeButton.disabled = true;
+  encodeButton.innerText = "Encoding...";
+
+  const fps = 60;
+  const duration = 4;
+
+  const offscreenCanvas = canvas.cloneNode();
+  const ctx = offscreenCanvas.getContext("2d");
+
+  const chunks = [];
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      const buf = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(buf);
+      chunks.push(buf);
+    },
+    error: (e) => console.error(e)
+  });
+  videoEncoder.configure({
+    codec: 'avc1.4d002a',
+    width: offscreenCanvas.width,
+    height: offscreenCanvas.height,
+  });
+
+  const numFrames = duration * fps;
+  for (let frameIndex = 0; frameIndex < numFrames; frameIndex++) {
+    draw(ctx, frameIndex / numFrames);
+    const timestamp = 100_000 * frameIndex / fps;
+    const frame = new VideoFrame(offscreenCanvas, {timestamp});
+    const keyFrame = frameIndex % 60 === 0;
+    videoEncoder.encode(frame, { keyFrame });
+    frame.close();
+  }
+
+  await videoEncoder.flush();
+  videoEncoder.close();
+
+  console.log(chunks.length, chunks.reduce((accum, chunk) => accum + chunk.length, 0));
+  download("encoded.h264", new Blob(chunks, { type: "application/octet-stream" }));
+
+  encodeButton.disabled = false;
+  encodeButton.innerText = "Encode";
+};
+
+function download(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
