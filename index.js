@@ -68,24 +68,34 @@ slider.oninput = () => {
   draw(mainCtx, slider.value);
 };
 
-async function wait(ms) {
+async function timeout(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const codecString = "avc1.4D0034"; // Profile 77 Level 5.2
+const videoCodec = "avc1.4D0034"; // Profile 77 Level 5.2
+const audioCodec = "mp4a.40.2"; // MPEG-4 AAC LC
 
 recordButton.onclick = async () => {
   const fps = 60;
   const duration = 4;
-  const options = { mimeType: `video/mp4;codecs=${codecString}` };
+  const options = { mimeType: `video/mp4;codecs=${videoCodec},${audioCodec}` };
 
   const offscreenCanvas = canvas.cloneNode();
   const ctx = offscreenCanvas.getContext("2d");
 
-  const recorder = new MediaRecorder(offscreenCanvas.captureStream(), options);
+  const audioCtx = new AudioContext();
+  const osc = audioCtx.createOscillator(); // Sine wave
+  const audioDest = audioCtx.createMediaStreamDestination();
+  osc.connect(audioDest);
+
+  const stream = offscreenCanvas.captureStream(0);
+  const videoTrack = stream.getVideoTracks()[0];
+  stream.addTrack(audioDest.stream.getAudioTracks()[0]);
+  const recorder = new MediaRecorder(stream, options);
   const chunks = [];
   recorder.ondataavailable = (event) => chunks.push(event.data);
   recorder.onstop = () => download("video.mp4", new Blob(chunks, { type: "video/mp4" }));
+  osc.start();
   recorder.start();
   recordButton.disabled = true;
   recordButton.innerText = "Recording video";
@@ -93,11 +103,13 @@ recordButton.onclick = async () => {
   const numFrames = duration * fps;
   for (let frame = 0; frame < numFrames; frame++) {
     draw(ctx, frame / numFrames);
-    await wait(1000 / fps);
+    videoTrack.requestFrame();
+    await timeout(1000 / fps);
     recorder.requestData();
   }
 
   recorder.stop();
+  osc.stop();
   recordButton.disabled = false;
   recordButton.innerText = "Record";
 };
@@ -113,7 +125,7 @@ encodeButton.onclick = async () => {
   const ctx = offscreenCanvas.getContext("2d");
 
   const config = {
-    codec: codecString,
+    codec: videoCodec,
     width: offscreenCanvas.width,
     height: offscreenCanvas.height,
     framerate: fps,
