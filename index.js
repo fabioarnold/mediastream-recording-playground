@@ -72,10 +72,12 @@ async function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const codecString = "avc1.4D0034"; // Profile 77 Level 5.2
+
 recordButton.onclick = async () => {
   const fps = 60;
   const duration = 4;
-  const options = { mimeType: "video/mp4; codecs=avc1" };
+  const options = { mimeType: `video/mp4;codecs=${codecString}` };
 
   const offscreenCanvas = canvas.cloneNode();
   const ctx = offscreenCanvas.getContext("2d");
@@ -110,6 +112,15 @@ encodeButton.onclick = async () => {
   const offscreenCanvas = canvas.cloneNode();
   const ctx = offscreenCanvas.getContext("2d");
 
+  const config = {
+    codec: codecString,
+    width: offscreenCanvas.width,
+    height: offscreenCanvas.height,
+    framerate: fps,
+  };
+  const isSupported = await VideoEncoder.isConfigSupported(config);
+  console.log('config isSupported:', isSupported);
+
   const chunks = [];
   const videoEncoder = new VideoEncoder({
     output: (chunk, meta) => {
@@ -119,11 +130,7 @@ encodeButton.onclick = async () => {
     },
     error: (e) => console.error(e)
   });
-  videoEncoder.configure({
-    codec: 'avc1.4d002a',
-    width: offscreenCanvas.width,
-    height: offscreenCanvas.height,
-  });
+  videoEncoder.configure(config);
 
   const numFrames = duration * fps;
   for (let frameIndex = 0; frameIndex < numFrames; frameIndex++) {
