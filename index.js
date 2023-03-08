@@ -75,10 +75,18 @@ async function timeout(ms) {
 const videoCodec = "avc1.4D0034"; // Profile 77 Level 5.2
 const audioCodec = "mp4a.40.2"; // MPEG-4 AAC LC
 
+const videoTypes = [
+  { ext: "mp4", mimeType: `video/mp4;codecs=${videoCodec},${audioCodec}` }, // Safari
+  { ext: "webm", mimeType: `video/webm;codecs=${videoCodec},${audioCodec}` }, // Chrome
+  { ext: "webm", mimeType: "video/webm;codecs=vp8,opus" }, // Firefox
+];
+
 recordButton.onclick = async () => {
+  recordButton.disabled = true;
+  recordButton.innerText = "Recording...";
+
   const fps = 60;
   const duration = 4;
-  const options = { mimeType: `video/mp4;codecs=${videoCodec},${audioCodec}` };
 
   const offscreenCanvas = canvas.cloneNode();
   const ctx = offscreenCanvas.getContext("2d");
@@ -88,24 +96,27 @@ recordButton.onclick = async () => {
   const audioDest = audioCtx.createMediaStreamDestination();
   osc.connect(audioDest);
 
-  const stream = offscreenCanvas.captureStream(0);
-  const videoTrack = stream.getVideoTracks()[0];
+  const stream = offscreenCanvas.captureStream();
   stream.addTrack(audioDest.stream.getAudioTracks()[0]);
-  const recorder = new MediaRecorder(stream, options);
+  let supportedVideoType;
+  for (const videoType of videoTypes) {
+    if (MediaRecorder.isTypeSupported(videoType.mimeType)) {
+      supportedVideoType = videoType;
+      break;
+    }
+  }
+  const recorder = new MediaRecorder(stream, {mimeType: supportedVideoType.mimeType});
   const chunks = [];
   recorder.ondataavailable = (event) => chunks.push(event.data);
-  recorder.onstop = () => download("video.mp4", new Blob(chunks, { type: "video/mp4" }));
+  recorder.onstop = () => download("video." + supportedVideoType.ext, new Blob(chunks, { type: supportedVideoType.mimeType }));
   osc.start();
   recorder.start();
-  recordButton.disabled = true;
-  recordButton.innerText = "Recording video";
 
   const numFrames = duration * fps;
   for (let frame = 0; frame < numFrames; frame++) {
     draw(ctx, frame / numFrames);
-    videoTrack.requestFrame();
-    await timeout(1000 / fps);
     recorder.requestData();
+    await timeout(1000 / fps);
   }
 
   recorder.stop();
