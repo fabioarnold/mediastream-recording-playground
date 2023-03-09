@@ -62,17 +62,28 @@ function draw(ctx, t) {
   ctx.restore();
 }
 
+function drawFrameNumber(ctx, frame) {
+  ctx.font = "bold 100px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "#000";
+  ctx.strokeText("Frame: " + frame, 10, 10);
+  ctx.fillStyle = "#fff";
+  ctx.fillText("Frame: " + frame, 10, 10);
+}
+
 draw(mainCtx, slider.value);
 
 slider.oninput = () => {
   draw(mainCtx, slider.value);
 };
 
-async function timeout(ms) {
+async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const videoCodec = "avc1.4D0034"; // Profile 77 Level 5.2
+const videoCodec = "avc1.4D0034"; // Profile 77 (Main) Level 5.2
 const audioCodec = "mp4a.40.2"; // MPEG-4 AAC LC
 
 const videoTypes = [
@@ -96,7 +107,8 @@ recordButton.onclick = async () => {
   const audioDest = audioCtx.createMediaStreamDestination();
   osc.connect(audioDest);
 
-  const stream = offscreenCanvas.captureStream();
+  const stream = offscreenCanvas.captureStream(0);
+  const videoStream = stream.getVideoTracks()[0];
   stream.addTrack(audioDest.stream.getAudioTracks()[0]);
   let supportedVideoType;
   for (const videoType of videoTypes) {
@@ -105,19 +117,23 @@ recordButton.onclick = async () => {
       break;
     }
   }
-  const recorder = new MediaRecorder(stream, {mimeType: supportedVideoType.mimeType});
+  const recorder = new MediaRecorder(stream, { mimeType: supportedVideoType.mimeType });
   const chunks = [];
   recorder.ondataavailable = (event) => chunks.push(event.data);
-  recorder.onstop = () => download("video." + supportedVideoType.ext, new Blob(chunks, { type: supportedVideoType.mimeType }));
+  recorder.onstop = () =>
+    download("video." + supportedVideoType.ext, new Blob(chunks, { type: supportedVideoType.mimeType }));
   osc.start();
   recorder.start();
 
   const numFrames = duration * fps;
   for (let frame = 0; frame < numFrames; frame++) {
+    await sleep(1000 / fps);
     draw(ctx, frame / numFrames);
+    drawFrameNumber(ctx, frame);
+    videoStream.requestFrame();
     recorder.requestData();
-    await timeout(1000 / fps);
   }
+  await sleep(1000 / fps);
 
   recorder.stop();
   osc.stop();
@@ -142,33 +158,53 @@ encodeButton.onclick = async () => {
     framerate: fps,
   };
   const isSupported = await VideoEncoder.isConfigSupported(config);
-  console.log('config isSupported:', isSupported);
+  console.log("config isSupported:", isSupported);
 
   const chunks = [];
   const videoEncoder = new VideoEncoder({
     output: (chunk, meta) => {
+      console.log(chunk, meta);
       const buf = new Uint8Array(chunk.byteLength);
       chunk.copyTo(buf);
       chunks.push(buf);
     },
-    error: (e) => console.error(e)
+    error: (e) => console.error(e),
   });
   videoEncoder.configure(config);
 
   const numFrames = duration * fps;
   for (let frameIndex = 0; frameIndex < numFrames; frameIndex++) {
     draw(ctx, frameIndex / numFrames);
-    const timestamp = 100_000 * frameIndex / fps;
-    const frame = new VideoFrame(offscreenCanvas, {timestamp});
+    const duration = 100_000 / fps;
+    const timestamp = frameIndex * duration;
+    let frame;
+    const useImageData = false;
+    if (useImageData) {
+      const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+      frame = new VideoFrame(imageData.data, {
+        format: "RGBA",
+        codedWidth: imageData.width,
+        codedHeight: imageData.height,
+        timestamp,
+        duration,
+      });
+    } else {
+      frame = new VideoFrame(offscreenCanvas, { timestamp, duration });
+    }
     const keyFrame = frameIndex % 60 === 0;
     videoEncoder.encode(frame, { keyFrame });
+    await sleep(1000 / fps);
     frame.close();
   }
 
   await videoEncoder.flush();
+  await sleep(1000);
   videoEncoder.close();
 
-  console.log(chunks.length, chunks.reduce((accum, chunk) => accum + chunk.length, 0));
+  console.log(
+    chunks.length,
+    chunks.reduce((accum, chunk) => accum + chunk.length, 0)
+  );
   download("encoded.h264", new Blob(chunks, { type: "application/octet-stream" }));
 
   encodeButton.disabled = false;
